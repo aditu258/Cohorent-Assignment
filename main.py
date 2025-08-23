@@ -26,6 +26,16 @@ def extract_contact_info(doctor_card):
         driver.execute_script("arguments[0].scrollIntoView({block: 'center', behavior: 'smooth'});", contact_button)
         time.sleep(2)
         
+        # Clear any existing phone number elements first
+        try:
+            existing_phone_elements = driver.find_elements(By.CSS_SELECTOR, '[data-qa-id="phone_number"]')
+            for elem in existing_phone_elements:
+                if elem.is_displayed():
+                    print("🗑️ Clearing existing phone number element")
+                    break
+        except:
+            pass
+        
         # Try multiple click strategies
         click_successful = False
         
@@ -63,15 +73,28 @@ def extract_contact_info(doctor_card):
         # Wait for the contact info to appear
         wait = WebDriverWait(driver, 10)
         try:
+            # Wait for a new phone number element to appear
             phone_element = wait.until(
                 EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa-id="phone_number"]'))
             )
+            
+            # Make sure we get the most recent phone number element
+            all_phone_elements = driver.find_elements(By.CSS_SELECTOR, '[data-qa-id="phone_number"]')
+            if len(all_phone_elements) > 1:
+                # Get the last (most recent) phone number element
+                phone_element = all_phone_elements[-1]
+                print(f"📞 Found {len(all_phone_elements)} phone elements, using the most recent one")
             
             # Extract the phone number
             phone_number = phone_element.text.strip()
             print(f"✅ Found phone number: {phone_number}")
             
-            return phone_number
+            # Additional verification - check if this is a valid phone number
+            if phone_number and len(phone_number) >= 10:
+                return phone_number
+            else:
+                print("⚠️ Invalid phone number format")
+                return ""
             
         except TimeoutException:
             print("❌ Phone number element did not appear after clicking")
@@ -79,6 +102,121 @@ def extract_contact_info(doctor_card):
         
     except Exception as e:
         print(f"❌ Could not extract contact info: {e}")
+        return ""
+
+def extract_detailed_address(doctor_card):
+    """Navigate to doctor's profile page and extract detailed address"""
+    try:
+        # Debug: Print all links in the doctor card
+        print("🔍 Debugging: Looking for profile links...")
+        all_links = doctor_card.find_elements(By.CSS_SELECTOR, 'a')
+        print(f"Found {len(all_links)} links in doctor card")
+        
+        for i, link in enumerate(all_links):
+            href = link.get_attribute('href')
+            text = link.text.strip()
+            print(f"  Link {i+1}: href='{href}', text='{text}'")
+        
+        # Try multiple selectors to find the doctor name link
+        name_link = None
+        
+        # Strategy 1: Look for link inside h2 with data-qa-id
+        try:
+            name_link = doctor_card.find_element(By.CSS_SELECTOR, 'h2[data-qa-id="doctor_name"] a')
+            print("✅ Found link using Strategy 1")
+        except NoSuchElementException:
+            print("❌ Strategy 1 failed")
+        
+        # Strategy 2: Look for any link that contains doctor name
+        if not name_link:
+            try:
+                name_link = doctor_card.find_element(By.CSS_SELECTOR, 'a[href*="/doctor/"]')
+                print("✅ Found link using Strategy 2")
+            except NoSuchElementException:
+                print("❌ Strategy 2 failed")
+        
+        # Strategy 3: Look for link inside info-section
+        if not name_link:
+            try:
+                name_link = doctor_card.find_element(By.CSS_SELECTOR, '.info-section a')
+                print("✅ Found link using Strategy 3")
+            except NoSuchElementException:
+                print("❌ Strategy 3 failed")
+        
+        # Strategy 4: Look for any anchor tag with href containing doctor
+        if not name_link:
+            try:
+                all_links = doctor_card.find_elements(By.CSS_SELECTOR, 'a[href*="doctor"]')
+                if all_links:
+                    name_link = all_links[0]
+                    print("✅ Found link using Strategy 4")
+            except NoSuchElementException:
+                print("❌ Strategy 4 failed")
+        
+        # Strategy 5: Look for any link with href containing "practo.com"
+        if not name_link:
+            try:
+                all_links = doctor_card.find_elements(By.CSS_SELECTOR, 'a[href*="practo.com"]')
+                if all_links:
+                    name_link = all_links[0]
+                    print("✅ Found link using Strategy 5")
+            except NoSuchElementException:
+                print("❌ Strategy 5 failed")
+        
+        if not name_link:
+            print("⚠️ No profile link found for this doctor")
+            return ""
+        
+        # Get the href attribute
+        profile_url = name_link.get_attribute('href')
+        
+        if not profile_url:
+            print("⚠️ No profile URL found")
+            return ""
+        
+        # Make sure it's a full URL
+        if profile_url.startswith('/'):
+            profile_url = "https://www.practo.com" + profile_url
+        
+        print(f"🔗 Navigating to profile: {profile_url}")
+        
+        # Open profile in new tab
+        driver.execute_script(f"window.open('{profile_url}', '_blank');")
+        
+        # Switch to the new tab
+        driver.switch_to.window(driver.window_handles[-1])
+        
+        # Wait for page to load
+        wait = WebDriverWait(driver, 15)
+        
+        try:
+            # Wait for the address element to appear
+            address_element = wait.until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, '[data-qa-id="clinic-address"]'))
+            )
+            
+            detailed_address = address_element.text.strip()
+            print(f"✅ Found detailed address: {detailed_address}")
+            
+            # Close the tab and switch back
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+            
+            return detailed_address
+            
+        except TimeoutException:
+            print("❌ Address element not found on profile page")
+            # Close the tab and switch back
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+            return ""
+            
+    except Exception as e:
+        print(f"❌ Error extracting detailed address: {e}")
+        # Make sure we're back on the main page
+        if len(driver.window_handles) > 1:
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
         return ""
 
 def extract_doctor_details(doctor_card):
@@ -152,32 +290,37 @@ def extract_doctor_details(doctor_card):
             except:
                 pass
         
-        # Extract complete address from JSON-LD script
-        try:
-            # Get the parent element that contains the script
-            parent_element = doctor_card.find_element(By.XPATH, "./..")
-            script_elements = parent_element.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
-            
-            for script in script_elements:
-                try:
-                    json_data = json.loads(script.get_attribute('innerHTML'))
-                    if '@type' in json_data and json_data['@type'] == 'Dentist':
-                        if 'address' in json_data:
-                            address = json_data['address']
-                            if isinstance(address, dict):
-                                street = address.get('streetAddress', '')
-                                locality = address.get('addressLocality', '')
-                                region = address.get('addressRegion', '')
-                                postal_code = address.get('postalCode', '')
-                                
-                                address_parts = [street, locality, region, postal_code]
-                                address_parts = [part for part in address_parts if part]
-                                doctor_info['complete_address'] = ', '.join(address_parts)
-                                break
-                except:
-                    continue
-        except:
-            pass
+        # Extract detailed address from profile page
+        detailed_address = extract_detailed_address(doctor_card)
+        if detailed_address:
+            doctor_info['complete_address'] = detailed_address
+        else:
+            # Fallback to JSON-LD structured data
+            try:
+                # Get the parent element that contains the script
+                parent_element = doctor_card.find_element(By.XPATH, "./..")
+                script_elements = parent_element.find_elements(By.CSS_SELECTOR, "script[type='application/ld+json']")
+                
+                for script in script_elements:
+                    try:
+                        json_data = json.loads(script.get_attribute('innerHTML'))
+                        if '@type' in json_data and json_data['@type'] == 'Dentist':
+                            if 'address' in json_data:
+                                address = json_data['address']
+                                if isinstance(address, dict):
+                                    street = address.get('streetAddress', '')
+                                    locality = address.get('addressLocality', '')
+                                    region = address.get('addressRegion', '')
+                                    postal_code = address.get('postalCode', '')
+                                    
+                                    address_parts = [street, locality, region, postal_code]
+                                    address_parts = [part for part in address_parts if part]
+                                    doctor_info['complete_address'] = ', '.join(address_parts)
+                                    break
+                    except:
+                        continue
+            except:
+                pass
         
         # Extract ratings
         try:
@@ -217,13 +360,6 @@ def extract_doctor_details(doctor_card):
             location = location_element.text.strip()
             if location and not doctor_info['complete_address']:
                 doctor_info['complete_address'] = location
-        except:
-            pass
-        
-        # Extract consultation fee (additional info)
-        try:
-            fee_element = doctor_card.find_element(By.CSS_SELECTOR, '[data-qa-id="consultation_fee"]')
-            doctor_info['consultation_fee'] = fee_element.text.strip()
         except:
             pass
         
@@ -293,7 +429,7 @@ try:
         print(f"Processing doctor {idx + 1}/{len(elems)}")
         print(f"{'='*50}")
         
-        # Extract all doctor details
+        # Extract all doctor details (including detailed address)
         doctor_info = extract_doctor_details(elem)
         print(f"Doctor: {doctor_info['doctors_name']}")
         print(f"Specialty: {doctor_info['specialty']}")
