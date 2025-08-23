@@ -6,6 +6,19 @@ from selenium.common.exceptions import TimeoutException, NoSuchElementException,
 from selenium.webdriver.common.action_chains import ActionChains
 import time, os, re, json
 import pandas as pd
+import google.generativeai as genai
+
+# Configure Gemini API
+GEMINI_API_KEY = "AIzaSyCYvmNfbSxbhh_mBDpxWPGIVdUsx-GruWo"  # Replace with your actual API key
+genai.configure(api_key=GEMINI_API_KEY)
+
+# Configure generation config for better compatibility
+generation_config = {
+    "temperature": 0.7,
+    "top_p": 0.8,
+    "top_k": 40,
+    "max_output_tokens": 2048,
+}
 
 driver = webdriver.Chrome()
 driver.get("https://www.practo.com/search/doctors?results_type=doctor&q=%5B%7B%22word%22%3A%22dentist%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22subspeciality%22%7D%2C%7B%22word%22%3A%22Aundh%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22locality%22%7D%5D&city=Pune&page=1")
@@ -219,6 +232,205 @@ def extract_detailed_address(doctor_card):
             driver.switch_to.window(driver.window_handles[0])
         return ""
 
+def extract_patient_stories(doctor_card):
+    """Extract patient stories/reviews from the doctor's profile page"""
+    try:
+        # Find the doctor name link to navigate to profile
+        name_link = None
+        
+        # Try multiple selectors to find the doctor name link
+        try:
+            name_link = doctor_card.find_element(By.CSS_SELECTOR, 'h2[data-qa-id="doctor_name"] a')
+        except NoSuchElementException:
+            try:
+                name_link = doctor_card.find_element(By.CSS_SELECTOR, 'a[href*="/doctor/"]')
+            except NoSuchElementException:
+                try:
+                    name_link = doctor_card.find_element(By.CSS_SELECTOR, '.info-section a')
+                except NoSuchElementException:
+                    try:
+                        all_links = doctor_card.find_elements(By.CSS_SELECTOR, 'a[href*="doctor"]')
+                        if all_links:
+                            name_link = all_links[0]
+                    except:
+                        pass
+        
+        if not name_link:
+            print("⚠️ No profile link found for extracting patient stories")
+            return []
+        
+        # Get the href attribute
+        profile_url = name_link.get_attribute('href')
+        if not profile_url:
+            return []
+        
+        # Make sure it's a full URL
+        if profile_url.startswith('/'):
+            profile_url = "https://www.practo.com" + profile_url
+        
+        print(f"📖 Navigating to profile for patient stories: {profile_url}")
+        
+        # Open profile in new tab
+        driver.execute_script(f"window.open('{profile_url}', '_blank');")
+        
+        # Switch to the new tab
+        driver.switch_to.window(driver.window_handles[-1])
+        
+        # Wait for page to load
+        wait = WebDriverWait(driver, 15)
+        
+        patient_stories = []
+        
+        try:
+            # Look for patient stories/reviews section
+            # Try to find reviews or feedback elements
+            review_elements = driver.find_elements(By.CSS_SELECTOR, '[data-qa-id="review-text"]')
+            
+            if review_elements:
+                print(f"📝 Found {len(review_elements)} review elements")
+                for i, elem in enumerate(review_elements[:10]):  # Get first 10 reviews
+                    try:
+                        review_text = elem.text.strip()
+                        if review_text and len(review_text) > 10:  # Only meaningful reviews
+                            patient_stories.append(review_text)
+                            print(f"  Review {i+1}: {review_text[:50]}...")
+                    except:
+                        continue
+            
+            # If no review-text elements, try other selectors
+            if not patient_stories:
+                feedback_elements = driver.find_elements(By.CSS_SELECTOR, '.feedback_content')
+                for i, elem in enumerate(feedback_elements[:10]):
+                    try:
+                        feedback_text = elem.text.strip()
+                        if feedback_text and len(feedback_text) > 10:
+                            patient_stories.append(feedback_text)
+                            print(f"  Feedback {i+1}: {feedback_text[:50]}...")
+                    except:
+                        continue
+            
+            # If still no stories, try looking for any text that might be reviews
+            if not patient_stories:
+                # Look for elements with "patient" or "review" in their text
+                all_elements = driver.find_elements(By.CSS_SELECTOR, 'p, div, span')
+                for elem in all_elements[:50]:  # Check first 50 elements
+                    try:
+                        text = elem.text.strip()
+                        if text and len(text) > 20 and ('patient' in text.lower() or 'treatment' in text.lower() or 'doctor' in text.lower()):
+                            if len(patient_stories) < 10:
+                                patient_stories.append(text)
+                                print(f"  Story {len(patient_stories)}: {text[:50]}...")
+                    except:
+                        continue
+            
+        except Exception as e:
+            print(f"❌ Error extracting patient stories: {e}")
+        
+        # Close the tab and switch back
+        driver.close()
+        driver.switch_to.window(driver.window_handles[0])
+        
+        print(f"✅ Extracted {len(patient_stories)} patient stories")
+        return patient_stories
+        
+    except Exception as e:
+        print(f"❌ Error in extract_patient_stories: {e}")
+        # Make sure we're back on the main page
+        if len(driver.window_handles) > 1:
+            driver.close()
+            driver.switch_to.window(driver.window_handles[0])
+        return []
+
+def generate_summary_with_gemini(patient_stories):
+    """Generate a 2-line summary using Gemini API"""
+    try:
+        if not patient_stories:
+            return "No patient stories available for summary."
+        
+        # Prepare the prompt for Gemini
+        stories_text = "\n\n".join([f"Story {i+1}: {story}" for i, story in enumerate(patient_stories[:10])])
+        
+        prompt = f"""
+        Based on the following patient stories and reviews about a doctor, provide a concise 2-line paragraph summary highlighting the key pros and cons, and overall recommendation.
+
+        Patient Stories:
+        {stories_text}
+
+        Please provide exactly 2 lines as a natural paragraph (no "Line 1:" or "Line 2:" labels):
+        First line: Key strengths and positive aspects
+        Second line: Areas of concern (if any) and overall recommendation
+
+        Write as a natural flowing paragraph with just 2 lines.
+        """
+        
+        # Try different model names - prioritize Gemini Flash
+        model_names = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+        
+        for model_name in model_names:
+            try:
+                print(f"🤖 Trying model: {model_name}")
+                model = genai.GenerativeModel(model_name, generation_config=generation_config)
+                response = model.generate_content(prompt)
+                
+                summary = response.text.strip()
+                print(f"✅ Gemini Summary: {summary}")
+                
+                return summary
+                
+            except Exception as model_error:
+                print(f"❌ Model {model_name} failed: {model_error}")
+                continue
+        
+        # If all models fail, create a simple summary manually
+        print("⚠️ All Gemini models failed, creating manual summary...")
+        return create_manual_summary(patient_stories)
+        
+    except Exception as e:
+        print(f"❌ Error generating summary with Gemini: {e}")
+        return "Summary generation failed."
+
+def create_manual_summary(patient_stories):
+    """Create a simple manual summary when Gemini API fails"""
+    try:
+        if not patient_stories:
+            return "No patient stories available for summary."
+        
+        # Count positive and negative keywords
+        positive_keywords = ['good', 'excellent', 'great', 'amazing', 'satisfied', 'recommend', 'best', 'professional', 'caring', 'gentle', 'painless', 'comfortable']
+        negative_keywords = ['bad', 'poor', 'terrible', 'painful', 'expensive', 'rude', 'unprofessional', 'disappointed', 'worst', 'avoid']
+        
+        positive_count = 0
+        negative_count = 0
+        
+        for story in patient_stories:
+            story_lower = story.lower()
+            for keyword in positive_keywords:
+                if keyword in story_lower:
+                    positive_count += 1
+            for keyword in negative_keywords:
+                if keyword in story_lower:
+                    negative_count += 1
+        
+        # Create summary based on sentiment
+        if positive_count > negative_count:
+            line1 = f"Positive feedback with {positive_count} positive mentions including professional care and patient satisfaction."
+            line2 = f"Overall recommended based on {len(patient_stories)} patient reviews."
+        elif negative_count > positive_count:
+            line1 = f"Mixed feedback with {negative_count} concerns mentioned by patients."
+            line2 = f"Consider with caution based on {len(patient_stories)} patient reviews."
+        else:
+            line1 = f"Balanced feedback with {positive_count} positive and {negative_count} negative mentions."
+            line2 = f"Mixed recommendations from {len(patient_stories)} patient reviews."
+        
+        manual_summary = f"{line1}\n{line2}"
+        print(f"📋 Manual Summary: {manual_summary}")
+        
+        return manual_summary
+        
+    except Exception as e:
+        print(f"❌ Error creating manual summary: {e}")
+        return f"Summary based on {len(patient_stories)} patient reviews."
+
 def extract_doctor_details(doctor_card):
     """Extract all doctor details from the card"""
     doctor_info = {
@@ -397,22 +609,50 @@ def save_to_excel(data, filename="doctors_pune_comprehensive.xlsx"):
     
     df = df[columns_order]
     
-    df.to_excel(filename, index=False)
+    # Remove rows with missing data
+    print(f"\n🔍 Checking for incomplete records...")
+    print(f"Original records: {len(df)}")
+    
+    # Define required fields that must not be empty
+    required_fields = ['doctors_name', 'contact_number', 'complete_address', 'specialty']
+    
+    # Create a mask for complete records
+    complete_mask = True
+    for field in required_fields:
+        if field in df.columns:
+            # Check if field is not empty and not just whitespace
+            field_mask = (df[field].notna()) & (df[field].astype(str).str.strip() != '')
+            complete_mask = complete_mask & field_mask
+            missing_count = (~field_mask).sum()
+            if missing_count > 0:
+                print(f"  ❌ {missing_count} records missing '{field}'")
+    
+    # Filter to keep only complete records
+    df_complete = df[complete_mask].copy()
+    removed_count = len(df) - len(df_complete)
+    
+    print(f"✅ Complete records: {len(df_complete)}")
+    print(f"🗑️ Removed {removed_count} incomplete records")
+    
+    # Save only complete records
+    df_complete.to_excel(filename, index=False)
     print(f"✅ Data saved to {filename}")
-    print(f"Total records: {len(df)}")
+    print(f"Final records: {len(df_complete)}")
     
     # Print summary
     print("\n" + "="*60)
     print("EXTRACTION SUMMARY:")
     print("="*60)
     print(f"Total doctors processed: {len(df)}")
-    print(f"Doctors with names: {len(df[df['doctors_name'] != ''])}")
-    print(f"Doctors with contact numbers: {len(df[df['contact_number'] != ''])}")
-    print(f"Doctors with ratings: {len(df[df['ratings'] != ''])}")
-    print(f"Doctors with reviews: {len(df[df['reviews'] != ''])}")
-    print(f"Doctors with addresses: {len(df[df['complete_address'] != ''])}")
+    print(f"Complete records saved: {len(df_complete)}")
+    print(f"Incomplete records removed: {removed_count}")
+    print(f"Doctors with names: {len(df_complete[df_complete['doctors_name'] != ''])}")
+    print(f"Doctors with contact numbers: {len(df_complete[df_complete['contact_number'] != ''])}")
+    print(f"Doctors with ratings: {len(df_complete[df_complete['ratings'] != ''])}")
+    print(f"Doctors with reviews: {len(df_complete[df_complete['reviews'] != ''])}")
+    print(f"Doctors with addresses: {len(df_complete[df_complete['complete_address'] != ''])}")
     
-    return df
+    return df_complete
 
 try:
     # wait until at least 1 doctor card is present
@@ -443,6 +683,19 @@ try:
         phone_number = extract_contact_info(elem)
         doctor_info['contact_number'] = phone_number
         print(f"Contact: {phone_number}")
+        
+        # Extract patient stories and generate summary
+        print("📖 Extracting patient stories for summary...")
+        patient_stories = extract_patient_stories(elem)
+        
+        if patient_stories:
+            print("🤖 Generating summary with Gemini...")
+            summary = generate_summary_with_gemini(patient_stories)
+            doctor_info['summary_pros_cons'] = summary
+            print(f"📋 Summary: {summary}")
+        else:
+            doctor_info['summary_pros_cons'] = "No patient stories available for summary."
+            print("⚠️ No patient stories found for summary")
         
         # Add to our data collection
         all_doctors_data.append(doctor_info)
