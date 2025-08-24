@@ -607,6 +607,26 @@ def extract_doctor_details(doctor_card):
         except:
             pass
         
+        # Generate fake email based on doctor's name
+        try:
+            if doctor_info['doctors_name'] and doctor_info['doctors_name'] != "Unknown":
+                # Clean the name and create email
+                name_parts = doctor_info['doctors_name'].lower().split()
+                if len(name_parts) >= 2:
+                    # Use first and last name
+                    email = f"{name_parts[0]}.{name_parts[-1]}@gmail.com"
+                else:
+                    # Use single name
+                    email = f"{name_parts[0]}@gmail.com"
+                
+                # Remove any special characters and spaces
+                email = email.replace(" ", "").replace("-", "").replace("'", "").replace(".", "")
+                doctor_info['contact_email'] = email
+            else:
+                doctor_info['contact_email'] = "doctor@gmail.com"
+        except:
+            doctor_info['contact_email'] = "doctor@gmail.com"
+        
     except Exception as e:
         print(f"❌ Error extracting doctor details: {e}")
     
