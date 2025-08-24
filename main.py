@@ -20,8 +20,24 @@ generation_config = {
     "max_output_tokens": 2048,
 }
 
+# Define specialties to scrape
+SPECIALTIES = [
+    "Cardiologist",
+    "Dermatologist", 
+    "Neurologist",
+    "Oncologist",
+    "General Surgeon",
+    "Orthopedic Surgeon",
+    "Neurosurgeon",
+    "Pediatrician",
+    "Gynecologist",
+    "Psychiatrist"
+]
+
+# Base URL for Practo search
+BASE_URL = "https://www.practo.com/search/doctors?results_type=doctor&q=%5B%7B%22word%22%3A%22{specialty}%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22subspeciality%22%7D%2C%7B%22word%22%3A%22Aundh%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22locality%22%7D%5D&city=Pune&page=1"
+
 driver = webdriver.Chrome()
-driver.get("https://www.practo.com/search/doctors?results_type=doctor&q=%5B%7B%22word%22%3A%22dentist%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22subspeciality%22%7D%2C%7B%22word%22%3A%22Aundh%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22locality%22%7D%5D&city=Pune&page=1")
 
 def extract_contact_info(doctor_card):
     """Extract contact information by clicking the Contact Clinic button"""
@@ -364,7 +380,7 @@ def generate_summary_with_gemini(patient_stories):
         """
         
         # Try different model names - prioritize Gemini Flash
-        model_names = ['gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+        model_names = ['gemini-2.5-flash']
         
         for model_name in model_names:
             try:
@@ -464,11 +480,24 @@ def extract_doctor_details(doctor_card):
             specialty_elements = doctor_card.find_elements(By.CSS_SELECTOR, "span")
             for elem in specialty_elements:
                 text = elem.text.strip()
-                if text.lower() in ['dentist', 'dental', 'orthodontist', 'endodontist', 'periodontist']:
+                # Check for all specialties
+                if text.lower() in [
+                    'cardiologist', 'cardiology', 'heart',
+                    'dermatologist', 'dermatology', 'skin',
+                    'neurologist', 'neurology', 'brain',
+                    'oncologist', 'oncology', 'cancer',
+                    'general surgeon', 'surgery',
+                    'orthopedic surgeon', 'orthopedics', 'orthopaedic',
+                    'neurosurgeon', 'neurosurgery',
+                    'pediatrician', 'pediatrics', 'paediatrician', 'paediatrics',
+                    'gynecologist', 'gynecology', 'gynaecologist', 'gynaecology', 'obstetrics',
+                    'psychiatrist', 'psychiatry', 'mental health',
+                    'dentist', 'dental', 'orthodontist', 'endodontist', 'periodontist'
+                ]:
                     doctor_info['specialty'] = text
                     break
         except:
-            doctor_info['specialty'] = "Dentist"  # Default
+            doctor_info['specialty'] = "Unknown"  # Default
         
         # Extract years of experience
         try:
@@ -646,70 +675,103 @@ def save_to_excel(data, filename="doctors_pune_comprehensive.xlsx"):
     print(f"Total doctors processed: {len(df)}")
     print(f"Complete records saved: {len(df_complete)}")
     print(f"Incomplete records removed: {removed_count}")
+    
+    # Show specialty breakdown
+    if 'specialty' in df_complete.columns:
+        print(f"\n📊 SPECIALTY BREAKDOWN:")
+        specialty_counts = df_complete['specialty'].value_counts()
+        for specialty, count in specialty_counts.items():
+            print(f"  {specialty}: {count} doctors")
+    
+    print(f"\n📋 FIELD COMPLETION:")
     print(f"Doctors with names: {len(df_complete[df_complete['doctors_name'] != ''])}")
     print(f"Doctors with contact numbers: {len(df_complete[df_complete['contact_number'] != ''])}")
+    print(f"Doctors with specialties: {len(df_complete[df_complete['specialty'] != ''])}")
+    print(f"Doctors with addresses: {len(df_complete[df_complete['complete_address'] != ''])}")
     print(f"Doctors with ratings: {len(df_complete[df_complete['ratings'] != ''])}")
     print(f"Doctors with reviews: {len(df_complete[df_complete['reviews'] != ''])}")
-    print(f"Doctors with addresses: {len(df_complete[df_complete['complete_address'] != ''])}")
     
     return df_complete
 
 try:
-    # wait until at least 1 doctor card is present
-    elems = WebDriverWait(driver, 20).until(
-        EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.u-border-general--bottom"))
-    )
-    print("Found:", len(elems))
-    
     all_doctors_data = []
     
-    # Process each doctor card
-    for idx, elem in enumerate(elems):
-        print(f"\n{'='*50}")
-        print(f"Processing doctor {idx + 1}/{len(elems)}")
-        print(f"{'='*50}")
+    # Process each specialty
+    for specialty_idx, specialty in enumerate(SPECIALTIES):
+        print(f"\n{'='*80}")
+        print(f"PROCESSING SPECIALTY {specialty_idx + 1}/{len(SPECIALTIES)}: {specialty}")
+        print(f"{'='*80}")
         
-        # Extract all doctor details (including detailed address)
-        doctor_info = extract_doctor_details(elem)
-        print(f"Doctor: {doctor_info['doctors_name']}")
-        print(f"Specialty: {doctor_info['specialty']}")
-        print(f"Experience: {doctor_info['years_of_experience']}")
-        print(f"Clinic: {doctor_info['clinic_hospital']}")
-        print(f"Address: {doctor_info['complete_address']}")
-        print(f"Ratings: {doctor_info['ratings']}")
-        print(f"Reviews: {doctor_info['reviews']}")
+        # Navigate to the specialty page
+        specialty_url = BASE_URL.format(specialty=specialty.replace(" ", "%20"))
+        print(f"🔗 Navigating to: {specialty_url}")
+        driver.get(specialty_url)
         
-        # Extract contact information
-        phone_number = extract_contact_info(elem)
-        doctor_info['contact_number'] = phone_number
-        print(f"Contact: {phone_number}")
+        # Wait for doctor cards to load
+        try:
+            elems = WebDriverWait(driver, 20).until(
+                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.u-border-general--bottom"))
+            )
+            print(f"✅ Found {len(elems)} doctors for {specialty}")
+        except TimeoutException:
+            print(f"❌ No doctors found for {specialty}")
+            continue
         
-        # Extract patient stories and generate summary
-        print("📖 Extracting patient stories for summary...")
-        patient_stories = extract_patient_stories(elem)
+        # Process only first 5 doctors for each specialty
+        doctors_to_process = min(5, len(elems))
+        print(f"📊 Processing {doctors_to_process} doctors for {specialty}")
         
-        if patient_stories:
-            print("🤖 Generating summary with Gemini...")
-            summary = generate_summary_with_gemini(patient_stories)
-            doctor_info['summary_pros_cons'] = summary
-            print(f"📋 Summary: {summary}")
-        else:
-            doctor_info['summary_pros_cons'] = "No patient stories available for summary."
-            print("⚠️ No patient stories found for summary")
+        for idx, elem in enumerate(elems[:doctors_to_process]):
+            print(f"\n{'='*50}")
+            print(f"Processing {specialty} doctor {idx + 1}/{doctors_to_process}")
+            print(f"{'='*50}")
+            
+            # Extract all doctor details (including detailed address)
+            doctor_info = extract_doctor_details(elem)
+            print(f"Doctor: {doctor_info['doctors_name']}")
+            print(f"Specialty: {doctor_info['specialty']}")
+            print(f"Experience: {doctor_info['years_of_experience']}")
+            print(f"Clinic: {doctor_info['clinic_hospital']}")
+            print(f"Address: {doctor_info['complete_address']}")
+            print(f"Ratings: {doctor_info['ratings']}")
+            print(f"Reviews: {doctor_info['reviews']}")
+            
+            # Extract contact information
+            phone_number = extract_contact_info(elem)
+            doctor_info['contact_number'] = phone_number
+            print(f"Contact: {phone_number}")
+            
+            # Extract patient stories and generate summary
+            print("📖 Extracting patient stories for summary...")
+            patient_stories = extract_patient_stories(elem)
+            
+            if patient_stories:
+                print("🤖 Generating summary with Gemini...")
+                summary = generate_summary_with_gemini(patient_stories)
+                doctor_info['summary_pros_cons'] = summary
+                print(f"📋 Summary: {summary}")
+            else:
+                doctor_info['summary_pros_cons'] = "No patient stories available for summary."
+                print("⚠️ No patient stories found for summary")
+            
+            # Add to our data collection
+            all_doctors_data.append(doctor_info)
+            
+            # Get the HTML content for backup
+            d = elem.get_attribute("outerHTML")
+            
+            # Save to file with specialty prefix
+            os.makedirs("data", exist_ok=True)
+            specialty_clean = specialty.lower().replace(" ", "_")
+            with open(f"data/{specialty_clean}_{idx}.html", "w", encoding="utf-8") as f:
+                f.write(d)
+            
+            # Add a small delay between processing each doctor
+            time.sleep(3)
         
-        # Add to our data collection
-        all_doctors_data.append(doctor_info)
-        
-        # Get the HTML content for backup
-        d = elem.get_attribute("outerHTML")
-        
-        # Save to file
-        os.makedirs("data", exist_ok=True)
-        with open(f"data/dentist_{idx}.html", "w", encoding="utf-8") as f:
-            f.write(d)
-        
-        # Add a small delay between processing each doctor
-        time.sleep(3)
+        # Add delay between specialties
+        print(f"⏳ Waiting 5 seconds before next specialty...")
+        time.sleep(5)
     
     # Save all data to Excel
     print("\n" + "="*60)
