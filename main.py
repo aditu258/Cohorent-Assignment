@@ -34,8 +34,11 @@ SPECIALTIES = [
     "Psychiatrist"
 ]
 
+# Define regions to search in Pune
+REGIONS = ["Aundh", "Baner", "Wakad"]
+
 # Base URL for Practo search
-BASE_URL = "https://www.practo.com/search/doctors?results_type=doctor&q=%5B%7B%22word%22%3A%22{specialty}%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22subspeciality%22%7D%2C%7B%22word%22%3A%22Aundh%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22locality%22%7D%5D&city=Pune&page=1"
+BASE_URL = "https://www.practo.com/search/doctors?results_type=doctor&q=%5B%7B%22word%22%3A%22{specialty}%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22subspeciality%22%7D%2C%7B%22word%22%3A%22{region}%22%2C%22autocompleted%22%3Atrue%2C%22category%22%3A%22locality%22%7D%5D&city=Pune&page=1"
 
 driver = webdriver.Chrome()
 
@@ -622,6 +625,7 @@ def save_to_excel(data, filename="doctors_pune_comprehensive.xlsx"):
         'complete_address',
         'doctors_name', 
         'specialty',
+        'region',
         'clinic_hospital',
         'years_of_experience',
         'contact_number',
@@ -683,10 +687,25 @@ def save_to_excel(data, filename="doctors_pune_comprehensive.xlsx"):
         for specialty, count in specialty_counts.items():
             print(f"  {specialty}: {count} doctors")
     
+    # Show region breakdown
+    if 'region' in df_complete.columns:
+        print(f"\n🌍 REGION BREAKDOWN:")
+        region_counts = df_complete['region'].value_counts()
+        for region, count in region_counts.items():
+            print(f"  {region}: {count} doctors")
+    
+    # Show specialty-region combination breakdown
+    if 'specialty' in df_complete.columns and 'region' in df_complete.columns:
+        print(f"\n🏥 SPECIALTY-REGION COMBINATIONS:")
+        combo_counts = df_complete.groupby(['specialty', 'region']).size()
+        for (specialty, region), count in combo_counts.items():
+            print(f"  {specialty} in {region}: {count} doctors")
+    
     print(f"\n📋 FIELD COMPLETION:")
     print(f"Doctors with names: {len(df_complete[df_complete['doctors_name'] != ''])}")
     print(f"Doctors with contact numbers: {len(df_complete[df_complete['contact_number'] != ''])}")
     print(f"Doctors with specialties: {len(df_complete[df_complete['specialty'] != ''])}")
+    print(f"Doctors with regions: {len(df_complete[df_complete['region'] != ''])}")
     print(f"Doctors with addresses: {len(df_complete[df_complete['complete_address'] != ''])}")
     print(f"Doctors with ratings: {len(df_complete[df_complete['ratings'] != ''])}")
     print(f"Doctors with reviews: {len(df_complete[df_complete['reviews'] != ''])}")
@@ -696,81 +715,100 @@ def save_to_excel(data, filename="doctors_pune_comprehensive.xlsx"):
 try:
     all_doctors_data = []
     
-    # Process each specialty
-    for specialty_idx, specialty in enumerate(SPECIALTIES):
+    # Process each region completely with all specialties
+    for region_idx, region in enumerate(REGIONS):
         print(f"\n{'='*80}")
-        print(f"PROCESSING SPECIALTY {specialty_idx + 1}/{len(SPECIALTIES)}: {specialty}")
+        print(f"PROCESSING REGION {region_idx + 1}/{len(REGIONS)}: {region}")
         print(f"{'='*80}")
         
-        # Navigate to the specialty page
-        specialty_url = BASE_URL.format(specialty=specialty.replace(" ", "%20"))
-        print(f"🔗 Navigating to: {specialty_url}")
-        driver.get(specialty_url)
-        
-        # Wait for doctor cards to load
-        try:
-            elems = WebDriverWait(driver, 20).until(
-                EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.u-border-general--bottom"))
+        # Process all specialties for this region
+        for specialty_idx, specialty in enumerate(SPECIALTIES):
+            print(f"\n{'='*60}")
+            print(f"PROCESSING: {specialty} in {region}")
+            print(f"Region {region_idx + 1}/{len(REGIONS)}, Specialty {specialty_idx + 1}/{len(SPECIALTIES)}")
+            print(f"{'='*60}")
+            
+            # Navigate to the specialty-region page
+            search_url = BASE_URL.format(
+                specialty=specialty.replace(" ", "%20"),
+                region=region.replace(" ", "%20")
             )
-            print(f"✅ Found {len(elems)} doctors for {specialty}")
-        except TimeoutException:
-            print(f"❌ No doctors found for {specialty}")
-            continue
-        
-        # Process only first 5 doctors for each specialty
-        doctors_to_process = min(5, len(elems))
-        print(f"📊 Processing {doctors_to_process} doctors for {specialty}")
-        
-        for idx, elem in enumerate(elems[:doctors_to_process]):
-            print(f"\n{'='*50}")
-            print(f"Processing {specialty} doctor {idx + 1}/{doctors_to_process}")
-            print(f"{'='*50}")
+            print(f"🔗 Navigating to: {search_url}")
+            driver.get(search_url)
             
-            # Extract all doctor details (including detailed address)
-            doctor_info = extract_doctor_details(elem)
-            print(f"Doctor: {doctor_info['doctors_name']}")
-            print(f"Specialty: {doctor_info['specialty']}")
-            print(f"Experience: {doctor_info['years_of_experience']}")
-            print(f"Clinic: {doctor_info['clinic_hospital']}")
-            print(f"Address: {doctor_info['complete_address']}")
-            print(f"Ratings: {doctor_info['ratings']}")
-            print(f"Reviews: {doctor_info['reviews']}")
+            # Wait for doctor cards to load
+            try:
+                elems = WebDriverWait(driver, 20).until(
+                    EC.presence_of_all_elements_located((By.CSS_SELECTOR, "div.u-border-general--bottom"))
+                )
+                print(f"✅ Found {len(elems)} doctors for {specialty} in {region}")
+            except TimeoutException:
+                print(f"❌ No doctors found for {specialty} in {region}")
+                continue
             
-            # Extract contact information
-            phone_number = extract_contact_info(elem)
-            doctor_info['contact_number'] = phone_number
-            print(f"Contact: {phone_number}")
+            # Process only first 5 doctors for each specialty-region combination
+            doctors_to_process = min(5, len(elems))
+            print(f"📊 Processing {doctors_to_process} doctors for {specialty} in {region}")
             
-            # Extract patient stories and generate summary
-            print("📖 Extracting patient stories for summary...")
-            patient_stories = extract_patient_stories(elem)
+            for idx, elem in enumerate(elems[:doctors_to_process]):
+                print(f"\n{'='*50}")
+                print(f"Processing {specialty} doctor {idx + 1}/{doctors_to_process} in {region}")
+                print(f"{'='*50}")
+                
+                # Extract all doctor details (including detailed address)
+                doctor_info = extract_doctor_details(elem)
+                print(f"Doctor: {doctor_info['doctors_name']}")
+                print(f"Specialty: {doctor_info['specialty']}")
+                print(f"Region: {region}")
+                print(f"Experience: {doctor_info['years_of_experience']}")
+                print(f"Clinic: {doctor_info['clinic_hospital']}")
+                print(f"Address: {doctor_info['complete_address']}")
+                print(f"Ratings: {doctor_info['ratings']}")
+                print(f"Reviews: {doctor_info['reviews']}")
+                
+                # Extract contact information
+                phone_number = extract_contact_info(elem)
+                doctor_info['contact_number'] = phone_number
+                print(f"Contact: {phone_number}")
+                
+                # Extract patient stories and generate summary
+                print("📖 Extracting patient stories for summary...")
+                patient_stories = extract_patient_stories(elem)
+                
+                if patient_stories:
+                    print("🤖 Generating summary with Gemini...")
+                    summary = generate_summary_with_gemini(patient_stories)
+                    doctor_info['summary_pros_cons'] = summary
+                    print(f"📋 Summary: {summary}")
+                else:
+                    doctor_info['summary_pros_cons'] = "No patient stories available for summary."
+                    print("⚠️ No patient stories found for summary")
+                
+                # Add region information to doctor data
+                doctor_info['region'] = region
+                
+                # Add to our data collection
+                all_doctors_data.append(doctor_info)
+                
+                # Get the HTML content for backup
+                d = elem.get_attribute("outerHTML")
+                
+                # Save to file with specialty and region prefix
+                os.makedirs("data", exist_ok=True)
+                specialty_clean = specialty.lower().replace(" ", "_")
+                region_clean = region.lower().replace(" ", "_")
+                with open(f"data/{specialty_clean}_{region_clean}_{idx}.html", "w", encoding="utf-8") as f:
+                    f.write(d)
+                
+                # Add a small delay between processing each doctor
+                time.sleep(3)
             
-            if patient_stories:
-                print("🤖 Generating summary with Gemini...")
-                summary = generate_summary_with_gemini(patient_stories)
-                doctor_info['summary_pros_cons'] = summary
-                print(f"📋 Summary: {summary}")
-            else:
-                doctor_info['summary_pros_cons'] = "No patient stories available for summary."
-                print("⚠️ No patient stories found for summary")
-            
-            # Add to our data collection
-            all_doctors_data.append(doctor_info)
-            
-            # Get the HTML content for backup
-            d = elem.get_attribute("outerHTML")
-            
-            # Save to file with specialty prefix
-            os.makedirs("data", exist_ok=True)
-            specialty_clean = specialty.lower().replace(" ", "_")
-            with open(f"data/{specialty_clean}_{idx}.html", "w", encoding="utf-8") as f:
-                f.write(d)
-            
-            # Add a small delay between processing each doctor
+            # Add delay between specialties within the same region
+            print(f"⏳ Waiting 3 seconds before next specialty in {region}...")
             time.sleep(3)
         
-        # Add delay between specialties
-        print(f"⏳ Waiting 5 seconds before next specialty...")
+        # Add delay between regions
+        print(f"⏳ Waiting 5 seconds before next region...")
         time.sleep(5)
     
     # Save all data to Excel
