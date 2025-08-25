@@ -1,4 +1,4 @@
-# Selenium Doctor Scraping Project
+# Doctor Scraping Project
 
 This project scrapes doctor information from Practo and organizes the data into an Excel file. The code has been split into three main files for better organization and maintainability.
 
