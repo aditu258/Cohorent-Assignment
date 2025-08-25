@@ -76,3 +76,4 @@ You can modify the following constants in `main.py`:
 ## Workflow Diagram
 
 ![Automation workflow diagram](images/workflow.png)
+<img width="1235" height="432" alt="Screenshot 2025-08-25 070741" src="https://github.com/user-attachments/assets/8e9fd2a1-f42a-4672-9fb2-d0eaaacc4cfb" />
