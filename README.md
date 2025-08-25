@@ -72,3 +72,7 @@ You can modify the following constants in `main.py`:
 - Saves HTML backups for each doctor card processed
 - Uses multiple strategies for extracting contact information
 - Falls back to manual summary generation if Gemini API fails
+
+## Workflow Diagram
+
+![Automation workflow diagram](images/workflow.png)
