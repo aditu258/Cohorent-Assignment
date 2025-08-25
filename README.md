@@ -57,6 +57,7 @@ pip install selenium pandas google-generativeai openpyxl
 - **Comprehensive data extraction**: Name, specialty, contact info, ratings, reviews
 - **Data validation**: Filters out incomplete records
 - **Error handling**: Robust error handling for web scraping issues
+- **Automation with n8n**: The scraping, summary generation, and data export can be automated end-to-end using n8n workflows.
 
 ## Configuration
 
